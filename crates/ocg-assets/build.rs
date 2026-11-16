@@ -54,7 +54,11 @@ fn main() -> Result<()> {
     }
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").context("OUT_DIR not set")?);
-    let generated_styles_path = out_dir.join("styles.css");
+    let generated_styles_path = if out_dir.is_absolute() {
+        out_dir.join("styles.css")
+    } else {
+        env::current_dir()?.join(out_dir).join("styles.css")
+    };
     let generated_styles_str = generated_styles_path
         .to_str()
         .context("OUT_DIR path is not valid UTF-8")?;
@@ -62,8 +66,10 @@ fn main() -> Result<()> {
     run(
         "tailwindcss",
         &[
+            "--cwd",
+            "../../ocg-server",
             "-i",
-            &format!("{STATIC_PATH}/css/styles.src.css"),
+            "static/css/styles.src.css",
             "-o",
             generated_styles_str,
         ],
