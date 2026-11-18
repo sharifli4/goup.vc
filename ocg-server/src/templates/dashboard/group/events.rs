@@ -771,6 +771,15 @@ pub(crate) struct Speaker {
     pub user_id: Uuid,
 }
 
+/// Result returned after synchronizing approved CFS speakers into an event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SyncApprovedSpeakersOutput {
+    /// Number of newly added event speaker associations.
+    pub added_count: usize,
+    /// Full event speakers list ordered for display.
+    pub speakers: Vec<crate::types::event::Speaker>,
+}
+
 /// Dashboard ticket price window payload.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]

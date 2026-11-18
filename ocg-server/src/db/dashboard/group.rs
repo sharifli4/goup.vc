@@ -24,6 +24,7 @@ use crate::{
             },
             events::{
                 ApprovedSubmissionSummary, CfsSubmissionStatus, EventsListFilters, GroupEvents,
+                SyncApprovedSpeakersOutput,
             },
             home::UserGroupsByAlliance,
             integrations::IntegrationPage,
@@ -688,6 +689,14 @@ pub(crate) trait DBDashboardGroup {
         group_id: Uuid,
         filters: &WaitlistFilters,
     ) -> Result<WaitlistOutput>;
+
+    /// Synchronizes approved CFS submission speakers into an event's speakers list.
+    async fn sync_event_approved_speakers(
+        &self,
+        actor_user_id: Uuid,
+        group_id: Uuid,
+        event_id: Uuid,
+    ) -> Result<SyncApprovedSpeakersOutput>;
 
     /// Unpublishes an event (sets published=false and clears publication metadata).
     async fn unpublish_event(
@@ -2385,6 +2394,21 @@ where
         self.fetch_json_one(
             "select search_event_waitlist($1::uuid, $2::jsonb)",
             &[&group_id, &Json(filters)],
+        )
+        .await
+    }
+
+    /// [`DBDashboardGroup::sync_event_approved_speakers`]
+    #[instrument(skip(self), err)]
+    async fn sync_event_approved_speakers(
+        &self,
+        actor_user_id: Uuid,
+        group_id: Uuid,
+        event_id: Uuid,
+    ) -> Result<SyncApprovedSpeakersOutput> {
+        self.fetch_json_one(
+            "select sync_event_approved_speakers($1::uuid, $2::uuid, $3::uuid)",
+            &[&actor_user_id, &group_id, &event_id],
         )
         .await
     }
