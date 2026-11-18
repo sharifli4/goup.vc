@@ -19,6 +19,20 @@ describe("sponsors-section", () => {
 
   useMountedElementsCleanup("sponsors-section");
 
+  it("keeps a selected sponsor and its remove control inside the section width", async () => {
+    const element = await mountLitComponent("sponsors-section", {
+      sponsors,
+      selectedSponsors: ["sponsor-1"],
+    });
+
+    expect(element.classList.contains("block")).to.equal(true);
+    expect(element.classList.contains("max-w-full")).to.equal(true);
+    const card = element.querySelector('[aria-label="Remove Acme Cloud"]')?.parentElement;
+    expect(card?.className).to.include("flex");
+    expect(card?.className).to.include("max-w-full");
+    expect(element.querySelector('[aria-label="Remove Acme Cloud"]')?.className).to.include("shrink-0");
+  });
+
   it("normalizes selected sponsor ids into sponsor objects", async () => {
     // Call mount lit component.
     const element = await mountLitComponent("sponsors-section", {
@@ -96,7 +110,60 @@ describe("sponsors-section", () => {
     ]);
     expect(element.showLevelModal).to.equal(false);
     expect(element.querySelector('input[name="sponsors[0][group_sponsor_id]"]').value).to.equal("sponsor-1");
+    expect(element.querySelector('input[name="sponsors[0][name]"]').value).to.equal("Acme Cloud");
+    expect(element.querySelector('input[name="sponsors[0][logo_url]"]').value).to.equal(
+      "https://example.com/acme.png",
+    );
     expect(element.querySelector('input[name="sponsors[0][level]"]').value).to.equal("Gold");
+  });
+
+  it("opens the add-sponsor dialog on the document body", async () => {
+    const element = await mountLitComponent("sponsors-section", { sponsors });
+
+    element.querySelector("button").click();
+    await element.updateComplete;
+
+    const modal = document.querySelector("[data-event-sponsor-modal='create']");
+    expect(modal).to.exist;
+    expect(element.contains(modal)).to.equal(false);
+    const logoField = modal.querySelector("image-field");
+    expect(logoField.getAttribute("image-kind")).to.equal("logo");
+    expect(logoField.getAttribute("target")).to.equal("logo");
+
+    logoField.dispatchEvent(
+      new CustomEvent("image-change", {
+        bubbles: true,
+        detail: { value: "https://example.com/logo.png" },
+      }),
+    );
+    await element.updateComplete;
+    expect(element.newSponsorLogoUrl).to.equal("https://example.com/logo.png");
+  });
+
+  it("keeps the add-sponsor dialog open when the opening click hits the backdrop", async () => {
+    const element = await mountLitComponent("sponsors-section", { sponsors });
+
+    element.querySelector("button").click();
+    await element.updateComplete;
+
+    const modal = document.querySelector("[data-event-sponsor-modal='create']");
+    const backdrop = modal.querySelector("[data-event-sponsor-backdrop]");
+    const panel = backdrop.nextElementSibling;
+    expect(panel.className).to.include("max-h-[calc(100dvh-2rem)]");
+    expect(panel.className).to.include("overflow-y-auto");
+    expect(panel.className).to.include("z-10");
+
+    backdrop.click();
+    await element.updateComplete;
+    expect(document.querySelector("[data-event-sponsor-modal='create']")).to.exist;
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    backdrop.click();
+    await element.updateComplete;
+    expect(element.showCreateModal).to.equal(false);
+    expect(document.querySelector("[data-event-sponsor-modal='create']")).to.equal(null);
   });
 
   it("adds an event-only sponsor with inline hidden fields", async () => {
@@ -128,6 +195,50 @@ describe("sponsors-section", () => {
       "https://example.com/event-partner",
     );
     expect(element.querySelector('input[name="sponsors[0][level]"]').value).to.equal("Community");
+  });
+
+  it("edits a sponsor name, logo, website, and level in place", async () => {
+    const element = await mountLitComponent("sponsors-section", { sponsors });
+
+    element._onSelect(sponsors[0]);
+    element.pendingLevel = "Gold";
+    element._confirmAddSponsorLevel();
+    await element.updateComplete;
+
+    element.querySelector('[aria-label="Edit Acme Cloud"]').click();
+    await element.updateComplete;
+
+    const modal = document.querySelector("[data-event-sponsor-modal='create']");
+    expect(modal.textContent).to.include("Edit sponsor");
+    expect(modal.querySelector("#event-sponsor-name").value).to.equal("Acme Cloud");
+    expect(modal.querySelector("#event-sponsor-level").value).to.equal("Gold");
+
+    element.newSponsorName = "Acme Platform";
+    element.newSponsorLogoUrl = "https://example.com/acme-new.png";
+    element.newSponsorWebsiteUrl = "https://example.com/acme";
+    element.newSponsorLevel = "Platinum";
+    element._confirmCreateSponsor();
+    await element.updateComplete;
+
+    expect(element.selectedSponsors).to.deep.equal([
+      {
+        group_sponsor_id: "sponsor-1",
+        name: "Acme Platform",
+        logo_url: "https://example.com/acme-new.png",
+        website_url: "https://example.com/acme",
+        level: "Platinum",
+      },
+    ]);
+    expect(element.querySelector('input[name="sponsors[0][group_sponsor_id]"]').value).to.equal("sponsor-1");
+    expect(element.querySelector('input[name="sponsors[0][name]"]').value).to.equal("Acme Platform");
+    expect(element.querySelector('input[name="sponsors[0][logo_url]"]').value).to.equal(
+      "https://example.com/acme-new.png",
+    );
+    expect(element.querySelector('input[name="sponsors[0][website_url]"]').value).to.equal(
+      "https://example.com/acme",
+    );
+    expect(element.querySelector('input[name="sponsors[0][level]"]').value).to.equal("Platinum");
+    expect(element.showCreateModal).to.equal(false);
   });
 
   it("blocks event submission when a selected sponsor is missing a level", async () => {

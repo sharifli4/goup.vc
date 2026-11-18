@@ -76,6 +76,47 @@ async fn test_page_db_error() {
 }
 
 #[tokio::test]
+async fn test_page_ignores_unknown_query_flags() {
+    // Setup identifiers
+    let community_id = Uuid::new_v4();
+    let group_id = Uuid::new_v4();
+    let session_id = session::Id::default();
+    let user_id = Uuid::new_v4();
+
+    // Setup database mock without statistics reads
+    let mut db = MockDB::new();
+    expect_authenticated_group_session(&mut db, session_id, user_id, community_id, group_id);
+    db.expect_user_has_group_permission()
+        .times(1)
+        .returning(|_, _, _, _| Ok(true));
+    db.expect_get_group_full()
+        .times(1)
+        .withf(move |cid, gid| *cid == community_id && *gid == group_id)
+        .returning(move |_, _| Ok(sample_group_full(community_id, group_id)));
+    db.expect_get_group_stats()
+        .times(1)
+        .withf(move |cid, gid| *cid == community_id && *gid == group_id)
+        .returning(|_, _| Ok(sample_group_stats()));
+
+    // Setup router and send request with an invalid flag
+    let router = TestRouterBuilder::new(db, MockNotificationsManager::new())
+        .build()
+        .await;
+    let request = Request::builder()
+        .method("GET")
+        .uri("/dashboard/group/analytics?include_subgroups=maybe")
+        .header(COOKIE, format!("id={session_id}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = router.oneshot(request).await.unwrap();
+    let (parts, body) = response.into_parts();
+    let bytes = to_bytes(body, usize::MAX).await.unwrap();
+
+    // Unknown query flags are ignored and the page still loads
+    assert_html_response(&parts, &bytes, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn test_page_success() {
     // Setup identifiers and data structures
     let alliance_id = Uuid::new_v4();

@@ -33,15 +33,15 @@ jobs:
               - '.github/workflows/ci.yml'
               - 'Cargo.lock'
               - 'Cargo.toml'
+              - 'crates/ocg-core/**'
+              - 'crates/ocg-db/**'
+              - 'crates/ocg-services/**'
+              - 'crates/ocg-templates-common/**'
+              - 'crates/ocg-templates-dashboard/**'
+              - 'crates/ocg-templates-notifications/**'
+              - 'crates/ocg-templates-public/**'
               - 'database/**'
               - 'justfile'
-              - 'ocg-server/Cargo.toml'
-              - 'ocg-server/src/db.rs'
-              - 'ocg-server/src/db/**'
-              - 'ocg-server/src/templates.rs'
-              - 'ocg-server/src/templates/**'
-              - 'ocg-server/src/types.rs'
-              - 'ocg-server/src/types/**'
             dependencies:
               - '.github/workflows/ci.yml'
               - '**/Cargo.lock'
@@ -64,6 +64,7 @@ jobs:
               - '.rustfmt.toml'
               - 'Cargo.lock'
               - 'Cargo.toml'
+              - 'crates/**'
               - 'ocg-redirector/**'
               - 'ocg-server/**'
             templates:
@@ -104,6 +105,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.server == 'true'
     runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=mold
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -112,16 +115,22 @@ jobs:
         with:
           toolchain: 1.96.0
           components: clippy, rustfmt
+      - name: Install mold
+        uses: taiki-e/install-action@mold
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Install Tailwind CSS
         run: |
           wget -O /usr/local/bin/tailwindcss https://github.com/tailwindlabs/tailwindcss/releases/download/v4.1.10/tailwindcss-linux-x64
           chmod +x /usr/local/bin/tailwindcss
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- --deny warnings
       - name: Run rustfmt
         run: cargo fmt --all -- --check
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --all-features -- --deny warnings
       - name: Run tests
-        run: cargo test
+        run: cargo test --workspace --lib --bins
 
   lint-markdown-files:
     needs: changes
@@ -182,7 +191,12 @@ jobs:
       - name: Install pgTAP extension in PostgreSQL service
         run: |
           docker exec -u root ${{ job.services.postgres.id }} sh -lc \
-            'apt-get update && (apt-get install -y postgresql-17-pgtap || apt-get install -y pgtap)'
+            'if grep -Rqs "bullseye-pgdg" /etc/apt/sources.list /etc/apt/sources.list.d; then
+               sed -i "s|http://apt.postgresql.org/pub/repos/apt|https://apt-archive.postgresql.org/pub/repos/apt|g" \
+                 /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
+             fi
+             apt-get update &&
+             (apt-get install -y postgresql-17-pgtap || apt-get install -y pgtap)'
       - name: Create database test tern config
         run: |
           cat >/tmp/ocg-tern-tests.conf <<EOF
@@ -215,9 +229,21 @@ jobs:
             /tmp/ocg-tern-legacy-migration-tests.conf
       - name: Install pgtap database extension
         run: PGPASSWORD=tests psql -h 127.0.0.1 -p ${{ job.services.postgres.ports[5432] }} -U tests tests -c 'create extension pgtap;'
+      - name: Load database test fixtures
+        working-directory: ./database/tests
+        run: |
+          for fixture in fixtures/*.sql; do
+            PGPASSWORD=tests psql \
+              -h 127.0.0.1 \
+              -p ${{ job.services.postgres.ports[5432] }} \
+              -U tests \
+              -d tests \
+              -v ON_ERROR_STOP=1 \
+              -f "$fixture"
+          done
       - name: Run database tests
         working-directory: ./database/tests
-        run: PGPASSWORD=tests pg_prove --host 127.0.0.1 --port ${{ job.services.postgres.ports[5432] }} --dbname tests --username tests --verbose schema/*.sql functions/*/*.sql
+        run: PGPASSWORD=tests pg_prove -j 4 --host 127.0.0.1 --port ${{ job.services.postgres.ports[5432] }} --dbname tests --username tests --verbose schema/*.sql functions/*/*.sql
 
   test-database-contracts:
     needs: changes
@@ -225,6 +251,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=mold
     services:
       postgres:
         image: postgis/postgis:17-3.5
@@ -242,8 +270,14 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.96.0
-      - name: Install just
-        uses: taiki-e/install-action@just
+      - name: Install just and mold
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just,mold
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Install Tailwind CSS
@@ -292,9 +326,20 @@ jobs:
       - name: Install frontend unit test dependencies
         working-directory: tests/unit
         run: npm ci
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-chromium-${{ hashFiles('tests/unit/package-lock.json') }}
       - name: Install Playwright browser for frontend unit tests
         working-directory: tests/unit
-        run: npx playwright install --with-deps chromium
+        run: |
+          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" != "true" ]; then
+            npx playwright install --with-deps chromium
+          else
+            npx playwright install-deps chromium
+          fi
       - name: Run frontend unit tests
         working-directory: tests/unit
         run: npm test

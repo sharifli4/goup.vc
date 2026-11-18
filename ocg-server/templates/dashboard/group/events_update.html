@@ -26,6 +26,15 @@
      data-group-logo-url="{{ event.group.logo_url }}"
      data-group-banner-url="{%- if let Some(banner_url) = &event.group.banner_url -%}{{ banner_url }}{%- endif -%}"
      data-group-banner-mobile-url="{%- if let Some(banner_mobile_url) = &event.group.banner_mobile_url -%}{{ banner_mobile_url }}{%- endif -%}">
+  <a href="/dashboard/group?tab=events"
+     hx-get="/dashboard/group?tab=events"
+     hx-target="body"
+     hx-push-url="true"
+     hx-indicator="#dashboard-spinner"
+     class="inline-flex items-center gap-2 text-sm font-medium text-stone-600 hover:text-stone-950">
+    <div class="svg-icon size-4 icon-arrow-left bg-current"></div>
+    Back to events
+  </a>
   <div class="mb-10 grid min-w-0 grid-cols-1 items-stretch gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:gap-x-8">
     <div class="min-w-0 overflow-x-auto">
       <select data-section-select
@@ -33,7 +42,7 @@
               class="select-primary w-full sm:w-sm xl:hidden">
         {{ event_form::tab_option(section = "details", label = "Details", active = true) -}}
         {{ event_form::tab_option(section = "date-venue", label = "Date & Venue") -}}
-        {{ event_form::tab_option(section = "hosts-sponsors", label = "Contributors") -}}
+        {{ event_form::tab_option(section = "hosts-sponsors", label = "People & Sponsors") -}}
         {% if can_manage_events -%}
           {{ event_form::tab_option(section = "cohosts", label = "Co-hosts") -}}
         {% endif -%}
@@ -50,11 +59,12 @@
         {% endif -%}
         {{ event_form::tab_option(section = "waitlist", label = "Waitlist") -}}
         {{ event_form::tab_option(section = "growth", label = "Growth & Finances") -}}
+        {{ event_form::tab_option(section = "analytics", label = "Analytics") -}}
       </select>
       <ul class="hidden min-w-max flex-nowrap gap-1 border-b border-stone-900/10 text-center font-medium xl:inline-flex [&>li]:w-auto [&>li]:shrink-0 [&>li>div>button]:w-auto [&>li>div>button]:whitespace-nowrap lg:gap-2">
         {{ event_form::tab_button(section = "details", icon = "event", label = "Details", active = true) -}}
         {{ event_form::tab_button(section = "date-venue", icon = "calendar", label = "Date & Venue") -}}
-        {{ event_form::tab_button(section = "hosts-sponsors", icon = "user-plus", label = "Hosts & Speakers") -}}
+        {{ event_form::tab_button(section = "hosts-sponsors", icon = "user-plus", label = "People & Sponsors") -}}
         {% if can_manage_events -%}
           {% let cohosts_attrs -%}hx-get="/dashboard/group/events/{{ event.event_id }}/cohosts" hx-trigger="click once" hx-target="#event-cohosts-content" hx-swap="innerHTML" hx-indicator="#event-cohosts-loading"{%- endlet %}
           {{ event_form::tab_button(section = "cohosts", icon = "team", label = "Co-hosts", extra_attrs = cohosts_attrs) -}}
@@ -77,6 +87,7 @@
         {{ event_form::tab_button(section = "waitlist", icon = "waitlist", label = "Waitlist", extra_attrs = waitlist_attrs) -}}
         {% let growth_attrs -%}hx-get="/dashboard/group/events/{{ event.event_id }}/growth" hx-trigger="click once" hx-target="#event-growth-content" hx-swap="innerHTML" hx-indicator="#event-growth-loading"{%- endlet %}
         {{ event_form::tab_button(section = "growth", icon = "chart", label = "Growth & Finances", extra_attrs = growth_attrs) -}}
+        {{ event_form::tab_button(section = "analytics", icon = "charts", label = "Analytics") -}}
       </ul>
     </div>
     <div class="flex min-w-28 flex-col items-stretch justify-center gap-2">
@@ -999,6 +1010,72 @@
         </div>
       </div>
       <review-submission-modal id="review-submission-modal" event-id="{{ event.event_id }}" statuses="{{ cfs_submission_statuses|json }}" labels="{{ event.cfs_labels|json }}" current-user-id="{{ current_user_id }}" message-max-length="{{ crate::validation::MAX_LEN_DESCRIPTION }}"></review-submission-modal>
+      <div id="submission-email-modal"
+           role="dialog"
+           aria-modal="true"
+           aria-hidden="true"
+           aria-labelledby="submission-email-modal-title"
+           class="hidden overflow-y-auto overflow-x-hidden fixed inset-0 z-[1000] h-full w-full items-center justify-center">
+        <div id="overlay-submission-email-modal"
+             class="modal-overlay absolute h-full w-full bg-stone-950 opacity-[0.35]"></div>
+        <div class="modal-panel relative z-10 p-4 w-full max-w-2xl">
+          <div class="modal-card rounded-lg bg-white">
+            {{ dashboard::modal_header(title_id = "submission-email-modal-title",
+            title = "Email speakers",
+            close_id = "close-submission-email-modal") -}}
+            <form id="submission-email-form"
+                  class="p-4 md:p-5"
+                  hx-post="/dashboard/group/events/{{ event.event_id }}/submissions/email"
+                  hx-swap="none"
+                  hx-disabled-elt="find button[type='submit']">
+              <input id="submission-email-audience" type="hidden" name="audience" value="all">
+              <p id="submission-email-summary" class="mb-6 text-sm text-stone-600"></p>
+              <div class="mb-6">
+                <label for="submission-email-subject" class="form-label">
+                  Subject <span class="asterisk">*</span>
+                </label>
+                <input id="submission-email-subject"
+                       name="subject"
+                       type="text"
+                       required
+                       maxlength="{{ crate::validation::MAX_LEN_M }}"
+                       class="input-primary mt-2"
+                       placeholder="Enter email subject">
+              </div>
+              <div class="mb-6">
+                <label for="submission-email-body" class="form-label">
+                  Body <span class="asterisk">*</span>
+                </label>
+                <textarea id="submission-email-body"
+                          name="body"
+                          required
+                          rows="6"
+                          maxlength="{{ crate::validation::MAX_LEN_NOTIFICATION_BODY }}"
+                          class="input-primary mt-2"
+                          placeholder="Enter email body (plain text only)"></textarea>
+                <p class="mt-1 text-xs text-stone-500">Plain text only. No HTML formatting.</p>
+              </div>
+              <div class="flex justify-end gap-3 pt-6 border-t border-stone-200">
+                <button id="cancel-submission-email" type="button" class="btn-primary-outline">Cancel</button>
+                <button id="submit-submission-email"
+                        type="submit"
+                        class="btn-primary relative
+                               {% if !can_manage_events || event.canceled -%}
+                                 opacity-50 cursor-not-allowed
+                               {% endif -%}"
+                        {% if !can_manage_events -%}
+                          disabled title="Your role cannot send emails to speakers."
+                        {% else if event.canceled -%}
+                          disabled title="Canceled events cannot send speaker emails."
+                        {% endif -%}>
+                  {{ ui::btn_spinner(id = "submission-email-spinner", spinner_type = "2") -}}
+                  <span>Send email</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
     </div>
     {# End Submissions Tab -#}
 
@@ -1182,6 +1259,19 @@
     <div data-content="hosts-sponsors" class="hidden">
       <form id="hosts-sponsors-form">
         <div class="space-y-12">
+          {# Organizers Section -#}
+          <div class="border-b border-stone-900/10 pb-12">
+            <div class="text-xl lg:text-2xl font-medium text-stone-900">Event Organizers</div>
+            <p class="mt-2 text-sm text-stone-500">
+              Organizers are listed on the public event page. Only accepted group team members can be added; existing organizers who left the team remain until removed.
+            </p>
+            <div class="mt-5">
+              <user-search-selector id="event-organizers-selector" selected-users="{{ event.organizers|json }}" available-users="{{ team_members|json }}" field-name="organizers" dashboard-type="group" label="organizer" legend="Search group team members by name or username"></user-search-selector>
+              <input type="hidden" name="organizers_present" value="true">
+            </div>
+          </div>
+          {# End Organizers Section -#}
+
           {# Hosts Section -#}
           <div class="border-b border-stone-900/10 pb-12">
             <div class="text-xl lg:text-2xl font-medium text-stone-900">Event Hosts</div>
@@ -1198,7 +1288,29 @@
 
           {# Event Speakers Section -#}
           <div class="border-b border-stone-900/10 pb-12">
-            <div class="text-xl lg:text-2xl font-medium text-stone-900">Event Speakers</div>
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div class="text-xl lg:text-2xl font-medium text-stone-900">Event Speakers</div>
+              <button id="sync-event-approved-speakers-button"
+                      type="button"
+                      hx-post="/dashboard/group/events/{{ event.event_id }}/speakers/sync"
+                      hx-swap="none"
+                      hx-indicator="#dashboard-spinner"
+                      hx-disabled-elt="this"
+                      class="btn-secondary btn-mini inline-flex items-center gap-2 whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50"
+                      {% if event_read_only -%}
+                        disabled
+                        {% if event.canceled -%}
+                          title="Canceled events are read-only."
+                        {% else -%}
+                          title="Your role cannot update events."
+                        {% endif -%}
+                      {% else -%}
+                      title="Add speakers from approved Call for Speakers submissions to this event's speakers list."
+                      {% endif -%}>
+                <div class="svg-icon size-3 icon-refresh shrink-0"></div>
+                <span>Sync approved speakers</span>
+              </button>
+            </div>
             <div class="mt-5">
               {% if let Some(legacy_speakers) = &event.legacy_speakers -%}
                 {% if !legacy_speakers.is_empty() -%}
@@ -1214,7 +1326,7 @@
           <div class="pb-12">
             <div class="text-xl lg:text-2xl font-medium text-stone-900">Event Sponsors</div>
             <div class="mt-5">
-              <sponsors-section sponsors="{{ sponsors|json }}" selected-sponsors="{{ event.sponsors|json }}" event-id="{{ event.event_id }}"></sponsors-section>
+              <sponsors-section class="block min-w-0 w-full max-w-full" sponsors="{{ sponsors|json }}" selected-sponsors="{{ event.sponsors|json }}" event-id="{{ event.event_id }}"></sponsors-section>
             </div>
           </div>
           {# End Sponsors Section -#}
@@ -1244,7 +1356,7 @@
 
 {# Attendees Tab -#}
 <div data-content="attendees" class="hidden">
-  <div id="attendees-content">
+  <div id="attendees-content" data-group-check-in-root>
     {# Loading placeholder -#}
     <div id="attendees-loading" class="flex items-center justify-center py-12">
       <div class="flex flex-col items-center space-y-4">
@@ -1298,6 +1410,33 @@
   </div>
 </div>
 {# End Growth & Finances Tab -#}
+
+{# Analytics Tab -#}
+<div data-content="analytics" class="hidden">
+  <p id="analytics-status" class="sr-only" role="status"></p>
+  <div id="analytics-content"
+       data-analytics-url="/dashboard/group/events/{{ event.event_id }}/analytics"
+       data-analytics-state="idle">
+    {{ dashboard::page_title(title = "Analytics", docs_href = "/docs#/guides/event-operations?id=analytics",
+        description = "Traffic, registrations and attendance for this event. Analytics are cached for up to an hour and may not display up to date information.") }}
+    <div id="analytics-loading" class="flex items-center justify-center py-12">
+      <div class="flex flex-col items-center space-y-4">
+        {{ ui::spinner(size = "size-10") -}}
+        <div class="text-sm text-stone-500">Loading analytics...</div>
+      </div>
+    </div>
+    <div id="analytics-error"
+         class="hidden mt-8 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+         role="alert"
+         tabindex="-1">
+      <p>Analytics could not be loaded. Please try again.</p>
+      <button type="button"
+              class="btn-primary-outline btn-mini mt-3"
+              data-analytics-retry>Retry</button>
+    </div>
+  </div>
+</div>
+{# End Analytics Tab -#}
 
 {# Form buttons -#}
 <div class="flex flex-wrap items-center justify-end gap-3 mt-6">

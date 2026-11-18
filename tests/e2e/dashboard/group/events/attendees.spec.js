@@ -38,7 +38,7 @@ const openAttendeesTab = async (page, eventName, eventId) => {
     page.waitForResponse(
       (response) =>
         response.request().method() === "GET" &&
-        response.url().includes(`/dashboard/group/events/${eventId}/update`) &&
+        new URL(response.url()).pathname === `/dashboard/group/events/${eventId}` &&
         response.ok(),
     ),
     eventRow.locator('td button[aria-label^="Edit event:"]').click(),
@@ -138,7 +138,7 @@ const createApprovalRequiredEvent = async (page, eventName) => {
     page.waitForResponse(
       (response) =>
         response.request().method() === "GET" &&
-        response.url().includes(`/dashboard/group/events/${eventId}/update`) &&
+        new URL(response.url()).pathname === `/dashboard/group/events/${eventId}` &&
         response.ok(),
     ),
     eventRow.locator('td button[aria-label^="Edit event:"]').click(),
@@ -181,11 +181,7 @@ test.describe("group dashboard attendees tab", () => {
       groupViewerPage.waitForResponse(
         (response) =>
           response.request().method() === "GET" &&
-          response
-            .url()
-            .includes(
-              `/dashboard/group/events/${TEST_EVENT_IDS.alpha.waitlistLab}/update`,
-            ) &&
+          new URL(response.url()).pathname === `/dashboard/group/events/${TEST_EVENT_IDS.alpha.waitlistLab}` &&
           response.ok(),
       ),
       eventRow
@@ -281,11 +277,7 @@ test.describe("group dashboard attendees tab", () => {
       organizerGroupPage.waitForResponse(
         (response) =>
           response.request().method() === "GET" &&
-          response
-            .url()
-            .includes(
-              `/dashboard/group/events/${TEST_EVENT_IDS.alpha.one}/update`,
-            ) &&
+          new URL(response.url()).pathname === `/dashboard/group/events/${TEST_EVENT_IDS.alpha.one}` &&
           response.ok(),
       ),
       eventRow
@@ -416,11 +408,7 @@ test.describe("group dashboard attendees tab", () => {
       organizerGroupPage.waitForResponse(
         (response) =>
           response.request().method() === "GET" &&
-          response
-            .url()
-            .includes(
-              `/dashboard/group/events/${TEST_EVENT_IDS.alpha.one}/update`,
-            ) &&
+          new URL(response.url()).pathname === `/dashboard/group/events/${TEST_EVENT_IDS.alpha.one}` &&
           response.ok(),
       ),
       eventRow
@@ -691,7 +679,8 @@ test.describe("group dashboard attendees tab", () => {
     );
     const csvContents = await readFile(downloadPath, "utf8");
     expect(csvContents).toContain(
-      "Name,Company,Title,Invited\nE2E Organizer One,,,No\n",
+      "Name,Company,Title,Invited,Payment method,Amount,Payment deadline,Paid at,Marked by,Payment details\n" +
+        "E2E Organizer One,,,No,Free,Free,,,,\n",
     );
   });
 
@@ -972,9 +961,7 @@ test.describe("group dashboard attendees tab", () => {
         organizerGroupPage.waitForResponse(
           (response) =>
             response.request().method() === "GET" &&
-            response
-              .url()
-              .includes(`/dashboard/group/events/${eventId}/update`) &&
+            new URL(response.url()).pathname === `/dashboard/group/events/${eventId}` &&
             response.ok(),
         ),
         eventRow.locator('td button[aria-label^="Edit event:"]').click(),
@@ -1352,11 +1339,7 @@ test.describe("group dashboard attendees tab", () => {
       organizerGroupPage.waitForResponse(
         (response) =>
           response.request().method() === "GET" &&
-          response
-            .url()
-            .includes(
-              `/dashboard/group/events/${TEST_EVENT_IDS.alpha.waitlistLab}/update`,
-            ) &&
+          new URL(response.url()).pathname === `/dashboard/group/events/${TEST_EVENT_IDS.alpha.waitlistLab}` &&
           response.ok(),
       ),
       eventRow
@@ -1428,11 +1411,7 @@ test.describe("group dashboard attendees tab", () => {
       organizerGroupPage.waitForResponse(
         (response) =>
           response.request().method() === "GET" &&
-          response
-            .url()
-            .includes(
-              `/dashboard/group/events/${TEST_EVENT_IDS.alpha.waitlistLab}/update`,
-            ) &&
+          new URL(response.url()).pathname === `/dashboard/group/events/${TEST_EVENT_IDS.alpha.waitlistLab}` &&
           response.ok(),
       ),
       eventRow
@@ -1704,11 +1683,7 @@ test.describe("group dashboard attendees tab", () => {
       organizerGroupPage.waitForResponse(
         (response) =>
           response.request().method() === "GET" &&
-          response
-            .url()
-            .includes(
-              `/dashboard/group/events/${TEST_EVENT_IDS.alpha.waitlistLab}/update`,
-            ) &&
+          new URL(response.url()).pathname === `/dashboard/group/events/${TEST_EVENT_IDS.alpha.waitlistLab}` &&
           response.ok(),
       ),
       eventRow

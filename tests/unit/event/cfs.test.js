@@ -2,10 +2,18 @@ import { expect } from "@open-wc/testing";
 
 import { waitForMicrotask } from "/tests/unit/test-utils/async.js";
 import { resetDom } from "/tests/unit/test-utils/dom.js";
+import { mockHtmx } from "/tests/unit/test-utils/globals.js";
 import { dispatchHtmxAfterSwap } from "/tests/unit/test-utils/htmx.js";
 
 describe("event cfs modal", () => {
+  let htmx;
+
+  beforeEach(() => {
+    htmx = mockHtmx();
+  });
+
   afterEach(() => {
+    htmx.restore();
     resetDom();
   });
 
@@ -128,5 +136,50 @@ describe("event cfs modal", () => {
     expect(
       document.getElementById("cfs-modal")?.classList.contains("hidden"),
     ).to.equal(false);
+  });
+
+  it("opens proposal creation and refreshes choices after a proposal is saved", async () => {
+    document.body.innerHTML = `
+      <div id="cfs-modal-root"></div>
+      <div id="cfs-modal" class="hidden">
+        <button id="create-session-proposal" type="button">Create proposal</button>
+        <div
+          id="session-proposal-modal-component"
+          data-cfs-refresh-url="/alliance/event/123/cfs-modal"
+        ></div>
+      </div>
+    `;
+    const proposalModal = document.getElementById(
+      "session-proposal-modal-component",
+    );
+    let opened = false;
+    proposalModal.openCreate = () => {
+      opened = true;
+    };
+    const requests = [];
+    const originalAjax = window.htmx.ajax;
+    window.htmx.ajax = (...args) => requests.push(args);
+
+    try {
+      await import(`/static/js/event/cfs.js?test=${Date.now()}-create`);
+      dispatchHtmxAfterSwap(document.getElementById("cfs-modal-root"));
+      await waitForMicrotask();
+
+      document.getElementById("create-session-proposal").click();
+      proposalModal.dispatchEvent(
+        new CustomEvent("session-proposal-saved", { bubbles: true }),
+      );
+
+      expect(opened).to.equal(true);
+      expect(requests).to.deep.equal([
+        [
+          "GET",
+          "/alliance/event/123/cfs-modal",
+          { target: "#cfs-modal-root", swap: "innerHTML" },
+        ],
+      ]);
+    } finally {
+      window.htmx.ajax = originalAjax;
+    }
   });
 });

@@ -13,6 +13,7 @@ use axum::{
     },
     response::{Html, IntoResponse},
 };
+use axum_messages::Messages;
 use chrono::{NaiveDate, Utc};
 use garde::Validate;
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,7 @@ use tracing::instrument;
 use uuid::Uuid;
 
 use crate::{
+    auth::AuthSession,
     config::{HttpServerConfig, MeetingsConfig, PaymentsConfig},
     db::{DBExt, DBOperations, DynDB},
     handlers::{
@@ -37,11 +39,16 @@ use crate::{
             enqueue_event_waitlist_promoted_notification,
         },
     },
-    templates::dashboard::group::{
-        events::{self, Event, EventsListFilters, EventsTab},
-        sponsors::GroupSponsorsFilters,
+    templates::{
+        PageId,
+        auth::User,
+        dashboard::group::{
+            events::{self, Event, EventsListFilters, EventsTab},
+            home::{Content, Page as GroupDashboardPage},
+            sponsors::GroupSponsorsFilters,
+        },
+        event::SponsorReportPage,
     },
-    templates::event::SponsorReportPage,
     types::{
         event::{EventGrowth, EventSummary},
         pagination::{self, NavigationLinks},
@@ -87,6 +94,7 @@ pub(crate) async fn add_page(
         payment_recipient,
         session_kinds,
         sponsors,
+        team_members,
         timezones,
     ) = tokio::try_join!(
         db.user_has_group_permission(
@@ -102,6 +110,7 @@ pub(crate) async fn add_page(
         db.get_group_payment_recipient(alliance_id, group_id),
         db.list_session_kinds(),
         db.list_group_sponsors(group_id, &sponsor_filters, true),
+        db.list_group_organizers(group_id),
         db.list_timezones()
     )?;
 
@@ -119,6 +128,7 @@ pub(crate) async fn add_page(
         meetings_max_participants,
         session_kinds,
         sponsors: sponsors.sponsors,
+        team_members,
         timezones,
     };
 
@@ -179,9 +189,87 @@ pub(crate) async fn update_page(
     State(payments_cfg): State<Option<PaymentsConfig>>,
     Path(event_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, HandlerError> {
-    // Prepare template
-    let meetings_enabled = meetings_cfg.as_ref().is_some_and(MeetingsConfig::meetings_enabled);
-    let meetings_max_participants = build_meetings_max_participants(meetings_cfg.as_ref());
+    let template = load_update_page(
+        &db,
+        alliance_id,
+        group_id,
+        user.user_id,
+        event_id,
+        meetings_cfg.as_ref(),
+        payments_cfg.as_ref(),
+    )
+    .await?;
+
+    Ok(Html(template.render()?))
+}
+
+/// Opens one event's details as its own dashboard page.
+#[instrument(skip_all, err)]
+pub(crate) async fn event_page(
+    auth_session: AuthSession,
+    messages: Messages,
+    SelectedAllianceId(alliance_id): SelectedAllianceId,
+    SelectedGroupId(group_id): SelectedGroupId,
+    State(db): State<DynDB>,
+    State(meetings_cfg): State<Option<MeetingsConfig>>,
+    State(payments_cfg): State<Option<PaymentsConfig>>,
+    Path(event_id): Path<Uuid>,
+) -> Result<impl IntoResponse, HandlerError> {
+    let user = auth_session.user.as_ref().expect("user to be logged in").clone();
+    let (can_manage_inbox, groups_by_alliance, site_settings) = tokio::try_join!(
+        db.user_has_group_permission(
+            &alliance_id,
+            &group_id,
+            &user.user_id,
+            GroupPermission::InboxWrite,
+        ),
+        db.list_user_groups(&user.user_id),
+        db.get_site_settings(),
+    )?;
+    let inbox_open_count = if can_manage_inbox {
+        db.count_group_open_inbox_conversations(group_id).await?
+    } else {
+        0
+    };
+    let update_page = load_update_page(
+        &db,
+        alliance_id,
+        group_id,
+        user.user_id,
+        event_id,
+        meetings_cfg.as_ref(),
+        payments_cfg.as_ref(),
+    )
+    .await?;
+    let page = GroupDashboardPage {
+        can_manage_inbox,
+        content: Content::EventDetails(Box::new(update_page)),
+        groups_by_alliance,
+        inbox_open_count,
+        messages: messages.into_iter().collect(),
+        page_id: PageId::GroupDashboard,
+        path: format!("/dashboard/group/events/{event_id}"),
+        selected_alliance_id: alliance_id,
+        selected_group_id: group_id,
+        site_settings,
+        user: User::from_session(auth_session).await?,
+    };
+
+    Ok(Html(page.render()?))
+}
+
+/// Loads the event editor used by the fragment and the standalone page.
+async fn load_update_page(
+    db: &DynDB,
+    alliance_id: Uuid,
+    group_id: Uuid,
+    user_id: Uuid,
+    event_id: Uuid,
+    meetings_cfg: Option<&MeetingsConfig>,
+    payments_cfg: Option<&PaymentsConfig>,
+) -> Result<events::UpdatePage, HandlerError> {
+    let meetings_enabled = meetings_cfg.is_some_and(MeetingsConfig::meetings_enabled);
+    let meetings_max_participants = build_meetings_max_participants(meetings_cfg);
     let sponsor_filters: GroupSponsorsFilters = serde_qs_config().deserialize_str("")?;
     let (
         can_manage_events,
@@ -195,19 +283,16 @@ pub(crate) async fn update_page(
         payment_recipient,
         session_kinds,
         sponsors,
+        team_members,
         timezones,
     ) = tokio::try_join!(
         db.user_has_group_permission(
             &alliance_id,
             &group_id,
-            &user.user_id,
+            &user_id,
             GroupPermission::EventsWrite
         ),
-        db.user_has_alliance_permission(
-            &alliance_id,
-            &user.user_id,
-            AlliancePermission::GroupsWrite
-        ),
+        db.user_has_alliance_permission(&alliance_id, &user_id, AlliancePermission::GroupsWrite),
         db.get_event_full(alliance_id, group_id, event_id),
         db.list_event_approved_cfs_submissions(event_id),
         db.list_event_categories(alliance_id),
@@ -217,29 +302,30 @@ pub(crate) async fn update_page(
         db.get_group_payment_recipient(alliance_id, group_id),
         db.list_session_kinds(),
         db.list_group_sponsors(group_id, &sponsor_filters, true),
+        db.list_group_organizers(group_id),
         db.list_timezones(),
     )?;
-    let template = events::UpdatePage {
+
+    Ok(events::UpdatePage {
         approved_submissions,
         can_manage_events,
         can_move_events,
         categories,
         cfs_submission_statuses: cfs_statuses,
-        current_user_id: user.user_id,
+        current_user_id: user_id,
         event,
         event_kinds,
         group_id,
         meetings_enabled,
         payments_enabled: payments_cfg.is_some(),
         payment_currency_codes,
-        payments_ready: payments_ready(payment_recipient.as_ref(), payments_cfg.as_ref()),
+        payments_ready: payments_ready(payment_recipient.as_ref(), payments_cfg),
         meetings_max_participants,
         session_kinds,
         sponsors: sponsors.sponsors,
+        team_members,
         timezones,
-    };
-
-    Ok(Html(template.render()?))
+    })
 }
 
 // JSON handlers.
@@ -595,6 +681,21 @@ pub(crate) async fn set_group_defaults(
         [("HX-Trigger", "group-event-defaults-updated")],
     )
         .into_response())
+}
+
+/// Synchronizes speakers from approved CFS submissions into the event speakers list.
+#[instrument(skip_all, err)]
+pub(crate) async fn sync_approved_speakers(
+    CurrentUser(user): CurrentUser,
+    SelectedGroupId(group_id): SelectedGroupId,
+    State(db): State<DynDB>,
+    Path(event_id): Path<Uuid>,
+) -> Result<impl IntoResponse, HandlerError> {
+    let result = db
+        .sync_event_approved_speakers(user.user_id, group_id, event_id)
+        .await?;
+
+    Ok(Json(result).into_response())
 }
 
 /// Returns the `<option>` list of groups the current event can be moved into.

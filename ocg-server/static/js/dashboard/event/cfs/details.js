@@ -12,20 +12,24 @@ export const renderCfsPersonRow = (person) => {
   const photoUrl = person?.photo_url || "";
   const initials = computeUserInitials(name, person?.username || "", 2);
 
+  const title = person?.title || "";
+  const company = person?.company || "";
+
   return html`
-    <div
-      class="inline-flex items-center gap-2 bg-stone-100 rounded-full ps-1 pe-2 py-1 max-w-full"
-      title=${name}
-    >
+    <div class="flex w-full max-w-full min-w-0 items-start gap-2 rounded-2xl bg-stone-100 py-1.5 ps-1 pe-3">
       <logo-image
-        class="shrink-0"
+        class="mt-0.5 shrink-0"
         image-url=${photoUrl}
         placeholder=${initials}
         size="size-[24px]"
         font-size="text-xs"
         hide-border
       ></logo-image>
-      <span class="text-sm text-stone-700 truncate">${name}</span>
+      <span class="min-w-0 break-words text-sm text-stone-700">
+        <span class="block">${name}</span>
+        ${title ? html`<span class="mt-0.5 block text-xs text-stone-500">${title}</span>` : ""}
+        ${company ? html`<span class="block text-xs text-stone-500">${company}</span>` : ""}
+      </span>
     </div>
   `;
 };
@@ -108,16 +112,16 @@ export const renderCfsDetailsPanel = (state) => {
       class="pt-5 space-y-8"
       ?hidden=${!state.isActive}
     >
-      <div class="flex flex-col md:flex-row gap-6">
-        <div class="flex-1 space-y-4 min-w-0">
+      <div class="flex flex-col gap-6 md:flex-row">
+        <div class="order-2 min-w-0 flex-1 space-y-4 md:order-1">
           <div>
             <div class="proposal-section-title">Title</div>
-            <div class="mt-2 text-lg text-stone-800 font-medium">${proposal?.title || ""}</div>
+            <div class="mt-2 break-words text-lg font-medium text-stone-800">${proposal?.title || ""}</div>
           </div>
 
           <div>
             <div class="proposal-section-title">Description</div>
-            <div class="mt-2 max-h-[200px] overflow-y-auto text-stone-700 text-sm/6 markdown">
+            <div class="mt-2 max-h-[200px] overflow-y-auto break-words text-stone-700 text-sm/6 markdown">
               ${
                 proposal?.description_html
                   ? renderTrustedHtml(proposal.description_html)
@@ -127,7 +131,9 @@ export const renderCfsDetailsPanel = (state) => {
           </div>
         </div>
 
-        <div class="w-full md:w-72 shrink-0 space-y-4 md:border-l md:border-stone-100 md:pl-6">
+        <div
+          class="order-1 w-full shrink-0 space-y-4 md:order-2 md:w-72 md:border-l md:border-stone-100 md:pl-6"
+        >
           ${renderCfsProposalMeta(proposal)}
 
           <div>

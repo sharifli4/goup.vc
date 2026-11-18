@@ -5,29 +5,70 @@ returns json as $$
         -- Parse pagination and sorting filters
         filters as (
             select
-                (p_filters->>'limit')::int as limit_value,
-                (p_filters->>'offset')::int as offset_value,
+                f.ilike_pattern,
+                f.limit_value,
+                f.offset_value,
                 case
-                    when lower(p_filters->>'sort') in (
+                    when f.sort in (
                         'created-asc',
                         'created-desc',
                         'ratings-count-asc',
                         'ratings-count-desc',
                         'stars-asc',
                         'stars-desc'
-                    ) then lower(p_filters->>'sort')
+                    ) then f.sort
                     else 'created-desc'
                 end as sort_value
+            from parse_search_filters(p_filters) f
         ),
         -- Parse selected label filters
         label_filter as (
             select
                 count(*)::int as labels_total,
-                coalesce(array_agg(label_id), '{}') as selected_label_ids
+                coalesce(array_agg(label_id), '{}') as selected_label_ids,
+                coalesce((p_filters->>'no_labels')::boolean, false) as no_labels
             from (
                 select value::uuid as label_id
                 from jsonb_array_elements_text(coalesce(p_filters->'label_ids', '[]'::jsonb))
             ) input_labels
+        ),
+        -- Count active submissions without any label assigned, independent of the current filters
+        unlabeled_counts as (
+            select count(*)::int as unlabeled_count
+            from cfs_submission cs
+            where cs.event_id = p_event_id
+            and cs.status_id <> 'withdrawn'
+            and not exists (
+                select 1
+                from cfs_submission_label csl
+                where csl.cfs_submission_id = cs.cfs_submission_id
+            )
+        ),
+        -- Count active submissions for every event label, independent of the current filters
+        label_counts as (
+            select coalesce(
+                json_agg(
+                    json_build_object(
+                        'event_cfs_label_id', counts.event_cfs_label_id,
+                        'submissions_count', counts.submissions_count
+                    )
+                    order by counts.event_cfs_label_id
+                ),
+                '[]'::json
+            ) as label_counts
+            from (
+                select
+                    ecl.event_cfs_label_id,
+                    count(cs.cfs_submission_id)::int as submissions_count
+                from event_cfs_label ecl
+                left join cfs_submission_label csl
+                    on csl.event_cfs_label_id = ecl.event_cfs_label_id
+                left join cfs_submission cs
+                    on cs.cfs_submission_id = csl.cfs_submission_id
+                    and cs.status_id <> 'withdrawn'
+                where ecl.event_id = p_event_id
+                group by ecl.event_cfs_label_id
+            ) counts
         ),
         -- Filter submissions for the event
         filtered_submissions as (
@@ -41,8 +82,30 @@ returns json as $$
                 cs.status_id,
                 cs.updated_at
             from cfs_submission cs
+            join session_proposal sp on sp.session_proposal_id = cs.session_proposal_id
+            join "user" speaker on speaker.user_id = sp.user_id
+            left join "user" co_speaker on co_speaker.user_id = sp.co_speaker_user_id
+            cross join filters f
             where cs.event_id = p_event_id
             and cs.status_id <> 'withdrawn'
+            and (
+                f.ilike_pattern is null
+                or sp.title ilike f.ilike_pattern
+                or speaker.name ilike f.ilike_pattern
+                or speaker.username ilike f.ilike_pattern
+                or speaker.company ilike f.ilike_pattern
+                or speaker.title ilike f.ilike_pattern
+                or co_speaker.name ilike f.ilike_pattern
+                or co_speaker.username ilike f.ilike_pattern
+            )
+            and (
+                not (select no_labels from label_filter)
+                or not exists (
+                    select 1
+                    from cfs_submission_label csl
+                    where csl.cfs_submission_id = cs.cfs_submission_id
+                )
+            )
             and (
                 (select labels_total from label_filter) = 0
                 or cs.cfs_submission_id in (
@@ -117,7 +180,7 @@ returns json as $$
         submissions as (
             select
                 fs.cfs_submission_id,
-                extract(epoch from fs.created_at)::bigint as created_at,
+                epoch_seconds(fs.created_at) as created_at,
                 json_strip_nulls(json_build_object(
                     'description', sp.description,
                     'duration_minutes', floor(extract(epoch from sp.duration) / 60)::int,
@@ -128,26 +191,10 @@ returns json as $$
 
                     'co_speaker', case
                         when co.user_id is null then null
-                        else json_strip_nulls(json_build_object(
-                            'user_id', co.user_id,
-                            'username', co.username,
-
-                            'company', co.company,
-                            'name', co.name,
-                            'photo_url', co.photo_url,
-                            'title', co.title
-                        ))
+                        else public_user_summary(co)
                     end
                 )) as session_proposal,
-                json_strip_nulls(json_build_object(
-                    'user_id', u.user_id,
-                    'username', u.username,
-
-                    'company', u.company,
-                    'name', u.name,
-                    'photo_url', u.photo_url,
-                    'title', u.title
-                )) as speaker,
+                public_user_summary(u) as speaker,
                 coalesce(rs.ratings_count, 0) as ratings_count,
                 fs.status_id,
                 css.display_name as status_name,
@@ -163,15 +210,7 @@ returns json as $$
                 ) as labels,
                 (
                     select coalesce(json_agg(json_strip_nulls(json_build_object(
-                        'reviewer', json_strip_nulls(json_build_object(
-                            'user_id', rating_user.user_id,
-                            'username', rating_user.username,
-
-                            'company', rating_user.company,
-                            'name', rating_user.name,
-                            'photo_url', rating_user.photo_url,
-                            'title', rating_user.title
-                        )),
+                        'reviewer', public_user_summary(rating_user),
                         'stars', csr.stars,
 
                         'comments', csr.comments
@@ -184,19 +223,20 @@ returns json as $$
                 fs.action_required_message,
                 rs.average_rating,
                 s.session_id as linked_session_id,
+                (
+                    select coalesce(
+                        json_agg(prep.prep_step order by prep.created_at asc, prep.prep_step asc),
+                        '[]'::json
+                    )
+                    from cfs_submission_prep_email prep
+                    where prep.cfs_submission_id = fs.cfs_submission_id
+                ) as prep_emails,
+                epoch_seconds(s.starts_at) as session_starts_at,
                 case
                     when reviewer.user_id is null then null
-                    else json_strip_nulls(json_build_object(
-                        'user_id', reviewer.user_id,
-                        'username', reviewer.username,
-
-                        'company', reviewer.company,
-                        'name', reviewer.name,
-                        'photo_url', reviewer.photo_url,
-                        'title', reviewer.title
-                    ))
+                    else public_user_summary(reviewer)
                 end as reviewed_by,
-                extract(epoch from fs.updated_at)::bigint as updated_at
+                epoch_seconds(fs.updated_at) as updated_at
             from paginated_submission_ids psi
             join filtered_submissions fs on fs.cfs_submission_id = psi.cfs_submission_id
             join session_proposal sp on sp.session_proposal_id = fs.session_proposal_id
@@ -223,8 +263,10 @@ returns json as $$
             join paginated_submission_ids psi using (cfs_submission_id)
         )
     select json_build_object(
+        'label_counts', label_counts.label_counts,
         'submissions', submissions_json.submissions,
-        'total', totals.total
+        'total', totals.total,
+        'unlabeled_count', unlabeled_counts.unlabeled_count
     )
-    from submissions_json, totals;
+    from submissions_json, totals, label_counts, unlabeled_counts;
 $$ language sql;

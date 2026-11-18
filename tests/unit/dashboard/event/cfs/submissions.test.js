@@ -2,14 +2,8 @@ import { expect } from "@open-wc/testing";
 
 import { initializeSubmissionFilters } from "/static/js/dashboard/event/cfs/actions.js";
 import { useDashboardTestEnv } from "/tests/unit/test-utils/env.js";
-import {
-  dispatchHtmxAfterRequest,
-  dispatchHtmxLoad,
-} from "/tests/unit/test-utils/htmx.js";
-import {
-  mountLitComponent,
-  useMountedElementsCleanup,
-} from "/tests/unit/test-utils/lit.js";
+import { dispatchHtmxAfterRequest, dispatchHtmxLoad } from "/tests/unit/test-utils/htmx.js";
+import { mountLitComponent, useMountedElementsCleanup } from "/tests/unit/test-utils/lit.js";
 
 describe("review-submission-modal", () => {
   useDashboardTestEnv({
@@ -59,8 +53,7 @@ describe("review-submission-modal", () => {
   };
 
   // Wait for filter submission scheduled in the next animation frame.
-  const waitForFilterSubmit = () =>
-    new Promise((resolve) => window.requestAnimationFrame(resolve));
+  const waitForFilterSubmit = () => new Promise((resolve) => window.requestAnimationFrame(resolve));
 
   // Render the component fixture.
   const renderModal = async (properties = {}) => {
@@ -130,9 +123,7 @@ describe("review-submission-modal", () => {
 
     // Verify opens with the current reviewer state and syncs labels from the filter.
     expect(element._isOpen).to.equal(true);
-    expect(element.labels).to.deep.equal([
-      { event_cfs_label_id: "7", name: "Backend", color: "blue" },
-    ]);
+    expect(element.labels).to.deep.equal([{ event_cfs_label_id: "7", name: "Backend", color: "blue" }]);
     expect(element._message).to.equal("Please expand the abstract");
     expect(element._ratingComment).to.equal("Looks promising");
     expect(element._ratingStars).to.equal(4);
@@ -162,6 +153,31 @@ describe("review-submission-modal", () => {
     expect(submitCalls).to.have.length(2);
   });
 
+  it("submits filters when the submission search changes or is cleared", async () => {
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `
+        <form id="submissions-filters-form">
+          <input id="submissions-search" name="ts_query" value="rust">
+          <button id="submissions-search-clear" type="button">Clear</button>
+        </form>
+      `,
+    );
+    const form = document.getElementById("submissions-filters-form");
+    const submitCalls = [];
+    form.requestSubmit = () => submitCalls.push(form);
+    const search = document.getElementById("submissions-search");
+
+    initializeSubmissionFilters();
+    search.dispatchEvent(new Event("change"));
+    await waitForFilterSubmit();
+    document.getElementById("submissions-search-clear").click();
+    await waitForFilterSubmit();
+
+    expect(search.value).to.equal("");
+    expect(submitCalls).to.have.length(2);
+  });
+
   it("initializes submissions filters on htmx load", async () => {
     // Prepare the submissions filters fixture.
     const { sort, submitCalls } = renderFilters();
@@ -173,6 +189,23 @@ describe("review-submission-modal", () => {
 
     // Verify the swapped filters submit after being initialized from htmx load.
     expect(submitCalls).to.have.length(1);
+  });
+
+  it("syncs real labels without exposing the No label filter option in the review modal", async () => {
+    const labelsFilter = document.createElement("cfs-label-selector");
+    labelsFilter.id = "submissions-label-filter";
+    labelsFilter.setAttribute("include-no-label", "");
+    labelsFilter.setAttribute("no-label-selected", "");
+    labelsFilter.labels = [{ event_cfs_label_id: "7", name: "Backend", color: "blue" }];
+    document.body.append(labelsFilter);
+    await labelsFilter.updateComplete;
+
+    const element = await renderModal();
+    element.open(buildSubmission());
+    await element.updateComplete;
+
+    expect(element.labels).to.deep.equal([{ event_cfs_label_id: "7", name: "Backend", color: "blue" }]);
+    labelsFilter.remove();
   });
 
   it("opens from a review trigger after the dashboard body is swapped", async () => {
@@ -198,9 +231,7 @@ describe("review-submission-modal", () => {
     );
 
     // Verify opens from a review trigger after the dashboard body.
-    document
-      .querySelector('[data-action="open-cfs-submission-modal"]')
-      ?.click();
+    document.querySelector('[data-action="open-cfs-submission-modal"]')?.click();
     await element.updateComplete;
 
     // Verify opens from a review trigger after the dashboard body is swapped.
@@ -256,27 +287,67 @@ describe("review-submission-modal", () => {
     expect(document.body.style.overflow).to.equal("");
   });
 
+  it("keeps review sections and speaker details inside a narrow screen", async () => {
+    const element = await renderModal({
+      statuses: [
+        { cfs_submission_status_id: "not-reviewed", display_name: "Not reviewed" },
+        { cfs_submission_status_id: "approved", display_name: "Approved" },
+        {
+          cfs_submission_status_id: "information-requested",
+          display_name: "Information requested",
+        },
+        { cfs_submission_status_id: "rejected", display_name: "Rejected" },
+      ],
+    });
+
+    element.open(
+      buildSubmission({
+        speaker: {
+          name: "Ada Lovelace with a very long speaker name that must stay on screen",
+          title: "Principal Community Architect and International Speaker Relations Lead",
+          company: "GOUP Alliance Community Programs",
+          username: "ada",
+        },
+      }),
+    );
+    await element.updateComplete;
+
+    const dialog = element.querySelector('[role="dialog"]');
+    const speakerName = element.querySelector("#cfs-submission-tabpanel-details span.break-words");
+    const decisionGrid = element.querySelector("#cfs-submission-tabpanel-decision .grid");
+    const tabList = element.querySelector('[role="tablist"]');
+
+    const decisionClasses = decisionGrid.className.split(/\s+/);
+
+    expect(dialog.className.split(/\s+/)).to.include("inset-0");
+    expect(dialog.className.split(/\s+/)).to.not.include("md:inset-0");
+    expect(speakerName.className.split(/\s+/)).to.include("min-w-0");
+    expect(speakerName.className.split(/\s+/)).to.not.include("truncate");
+    expect(speakerName.textContent).to.include("Ada Lovelace");
+    expect(speakerName.textContent).to.include("Principal Community Architect");
+    expect(decisionClasses).to.include("grid-cols-1");
+    expect(decisionClasses).to.include("sm:grid-cols-3");
+    expect(decisionClasses).to.not.include("grid-cols-3");
+    expect(tabList.className.split(/\s+/)).to.include("min-w-0");
+    expect(element.querySelector('[role="tab"]').className.split(/\s+/)).to.not.include("w-32");
+  });
+
   it("builds submission endpoints and emits approved submission updates", async () => {
     // Render the modal fixture.
     const element = await renderModal();
     const receivedEvents = [];
 
     // Verify approved submission updates are emitted.
-    document.body.addEventListener(
-      "event-approved-submissions-updated",
-      (event) => {
-        receivedEvents.push(event.detail);
-      },
-    );
+    document.body.addEventListener("event-approved-submissions-updated", (event) => {
+      receivedEvents.push(event.detail);
+    });
 
     // Call build submission.
     element._submission = buildSubmission();
     element._statusId = "approved";
 
     // Assert the element state.
-    expect(element._buildSubmissionEndpoint()).to.equal(
-      "/dashboard/group/events/event-7/submissions/12",
-    );
+    expect(element._buildSubmissionEndpoint()).to.equal("/dashboard/group/events/event-7/submissions/12");
 
     // Call emit approved submissions update.
     element._emitApprovedSubmissionsUpdate();
@@ -302,12 +373,9 @@ describe("review-submission-modal", () => {
     const receivedEvents = [];
 
     // Verify binds HTMX afterRequest handlers that close.
-    document.body.addEventListener(
-      "event-approved-submissions-updated",
-      (event) => {
-        receivedEvents.push(event.detail);
-      },
-    );
+    document.body.addEventListener("event-approved-submissions-updated", (event) => {
+      receivedEvents.push(event.detail);
+    });
 
     // Open an approved submission before emitting the update.
     element.open(
@@ -365,5 +433,31 @@ describe("review-submission-modal", () => {
     expect(element._isOpen).to.equal(false);
     expect(element._removeDismissListeners).to.equal(removeDismissListeners);
     expect(cleanupCalls).to.equal(0);
+  });
+
+  it("opens and closes the speaker email dialog for the chosen audience", () => {
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `
+        <button type="button" data-submission-email-open data-audience="rejected">Email rejected</button>
+        <div id="submission-email-modal" class="hidden" aria-hidden="true">
+          <p id="submission-email-summary"></p>
+          <input id="submission-email-audience" name="audience" value="">
+          <button id="close-submission-email-modal" type="button">Close</button>
+        </div>
+      `,
+    );
+
+    dispatchHtmxLoad(document.body);
+    document.querySelector("[data-audience='rejected']").click();
+
+    const modal = document.getElementById("submission-email-modal");
+    expect(modal.classList.contains("hidden")).to.equal(false);
+    expect(modal.classList.contains("flex")).to.equal(true);
+    expect(document.getElementById("submission-email-audience").value).to.equal("rejected");
+    expect(document.getElementById("submission-email-summary").textContent).to.include("rejected");
+
+    document.getElementById("close-submission-email-modal").click();
+    expect(modal.classList.contains("hidden")).to.equal(true);
   });
 });
