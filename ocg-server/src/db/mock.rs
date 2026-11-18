@@ -1056,6 +1056,12 @@ mock! {
             group_id: Uuid,
             filters: &crate::templates::dashboard::group::waitlist::WaitlistFilters,
         ) -> Result<crate::templates::dashboard::group::waitlist::WaitlistOutput>;
+        async fn sync_event_approved_speakers(
+            &self,
+            actor_user_id: Uuid,
+            group_id: Uuid,
+            event_id: Uuid,
+        ) -> Result<crate::templates::dashboard::group::events::SyncApprovedSpeakersOutput>;
         async fn unpublish_event(&self, actor_user_id: Uuid, group_id: Uuid, event_id: Uuid)
             -> Result<()>;
         async fn unpublish_event_series_events(&self, actor_user_id: Uuid, group_id: Uuid, event_ids: &[Uuid])

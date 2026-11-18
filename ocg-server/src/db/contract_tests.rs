@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::{
     auth::UserSummary,
     db::{
-        PgDB,
+        DB, PgDB,
         alliance::DBAlliance,
         auth::DBAuth,
         common::DBCommon,
@@ -1575,6 +1575,27 @@ async fn db_contracts_update_event_deserializes() -> Result<()> {
         .await?;
 
     assert!(promoted_user_ids.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires the contract test database"]
+async fn db_contracts_sync_event_approved_speakers_deserializes() -> Result<()> {
+    let db = contract_tests_db()?;
+    let tx = db.begin().await?;
+    let output = tx
+        .sync_event_approved_speakers(organizer_id(), group_id(), event_id())
+        .await?;
+
+    assert_eq!(output.added_count, 1);
+    assert_eq!(output.speakers.len(), 2);
+    assert!(output.speakers[0].featured);
+    assert_eq!(output.speakers[0].user.user_id, organizer_id());
+    assert!(!output.speakers[1].featured);
+    assert_eq!(output.speakers[1].user.user_id, attendee_id());
+
+    tx.rollback().await?;
 
     Ok(())
 }
